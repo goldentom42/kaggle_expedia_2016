@@ -182,7 +182,6 @@ if __name__ == '__main__':
         print('Bayesian analysis: submission:%s, keys:%s'
               % (do_submission, the_keys))
         ber = BayesianExpediaReco(nb_recos=NB_RECOS,
-                                  the_keys=the_keys,
                                   do_submission=do_submission,
                                   weight_type=weight_type,
                                   name=name)

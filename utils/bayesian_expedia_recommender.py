@@ -17,17 +17,13 @@ import time
 class BayesianExpediaReco(object):
     def __init__(self,
                  nb_recos=5,
-                 the_keys=None,
                  do_submission=False,
                  weight_type=None,
                  name='standard'):
         self.nb_recos = nb_recos
         self.best_hotels = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
         self.validation_stats = defaultdict(lambda: {x: [0, 0] for x in range(self.nb_recos)})
-        self.the_keys = the_keys
-        self.len_keys = 0
-        if self.the_keys is not None:
-            self.len_keys = len(self.the_keys)
+        self.the_keys = None
         self.do_submission = do_submission
         self.validation_recos = 0
         self.name = name
@@ -60,10 +56,6 @@ class BayesianExpediaReco(object):
         # Update best_hotels dict
         # Note that all values in the keys are input because of the dropna in build_reco
         self.best_hotels[dict_key][row['hotel_cluster']] += row['weight']
-
-    def get_key(self, row):
-        # print(row)
-        return tuple(row[:self.len_keys])
 
     def update_hotels(self, key_nb, dict_key, row):
         self.best_hotels[key_nb][dict_key][row[-1]] += row[-2]
@@ -161,7 +153,7 @@ class BayesianExpediaReco(object):
                 df['weight'] = df['weight1']
             # 2nd weight strategy does not reduce old events importance but weight bookings more than clicks
             if self.weight_strategy == 2:
-                 df['weight'] = df['weight2']
+                df['weight'] = df['weight2']
 
             # This call takes 10 times slower than the selected call
             # raw=False uses pd.Series
@@ -235,7 +227,7 @@ class BayesianExpediaReco(object):
                     df['weight'] = df['weight1']
                 # 2nd weight strategy does not reduce old events importance but weight bookings more than clicks
                 if w_type_ == 2:
-                     df['weight'] = df['weight2']
+                    df['weight'] = df['weight2']
 
                 # This call takes 10 times slower than the selected call
                 # raw=False uses pd.Series
@@ -272,19 +264,16 @@ class BayesianExpediaReco(object):
 
     def apply_reco_to_dataset(self, row, indices=None):
         """
-        Validation applies to row['year'] == 2013) or ((row['year'] == 2014) and (row['month'] <= 4)
+
         :param row: key values
+        :param indices: list of indices to access keys directly in row
         :return: recommendations
         """
         self.validation_recos += 1
-        # print('val : ', self.validation_recos)
-        # print('indices : ', indices)
         len_recos = 0
         recos = []
-        # print('row : ', row)
         # Loop over registered keys
-        # print(self.the_keys)
-        for k_, (name_, keys_, w_type_) in enumerate(self.the_keys):
+        for k_ in range(len(self.the_keys)):
             # Compute the key using the indices
             dict_key = tuple(row[indices[k_]])
             # Check if dict_key is in the k_ th defaultdict
@@ -304,16 +293,14 @@ class BayesianExpediaReco(object):
                     # Add current recommendation for this line
                     recos.append(top_items[i][0])
                     # update number of times the key has been used
-                    # self.validation_stats[len_recos][0] += 1
                     self.validation_stats[k_][len_recos][0] += 1
                     # update the number of times this reco is the target hotel cluster at this place
-                    # if top_items[i][0] == row['hotel_cluster']:
                     if not self.do_submission:
                         # Last element in row is the hotel_cluster
                         if top_items[i][0] == row[-1]:
-                            # self.validation_stats[len_recos][1] += 1
                             self.validation_stats[k_][len_recos][1] += 1
                     len_recos += 1
+
         # Return the list of recommendations in the required format (i.e. space separated)
         str_recos = [str(int(reco)) for reco in recos]
         return ' '.join(str_recos)
@@ -379,12 +366,7 @@ class BayesianExpediaReco(object):
             indices.append([i for j in range(len(keys_)) for i in range(len(all_keys)) if all_keys[i] == keys_[j]])
 
         for k, df in enumerate(pd.read_csv('input/test.csv', chunksize=100000, iterator=True)):
-            # df['pd_date_time'] = pd.to_datetime(df['date_time'])
-            # df['year'] = df['pd_date_time'].dt.year
-            # df['month'] = df['pd_date_time'].dt.month
-            # df['dom'] = df['pd_date_time'].dt.day
 
-            # df['hotel_cluster'] = df[self.the_keys].apply(lambda row: self.apply_reco_to_dataset(row), axis=1, raw=True)
             df['hotel_cluster'] = np.apply_along_axis(func1d=self.apply_reco_to_dataset,
                                                       axis=1,
                                                       arr=df[all_keys].values,
