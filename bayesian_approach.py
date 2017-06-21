@@ -55,7 +55,7 @@ import getopt
 import time
 import pandas as pd
 from utils.bayesian_expedia_recommender import BayesianExpediaReco
-# import cProfile
+import cProfile
 
 NB_RECOS = 5
 
@@ -188,8 +188,12 @@ if __name__ == '__main__':
         if the_keys:
             ber.register_key(the_name=name, the_key=the_keys, the_weight=weight_type)
         # Get recommendations from train data
+        # cProfile.run('ber.build_reco()')
+        print("Building reco")
         ber.build_reco()
         # Assign recommendations
+        print("Assigning RECO")
         ber.assign_reco_to_dataset()
+        # cProfile.run('ber.build_reco()')
         # Display validation stats
-        ber.display_stats2()
+        ber.display_stats()

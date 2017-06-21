@@ -1,9 +1,17 @@
 """
-Using no weighting strategy i.e. weight = 1 : LB score is : Private 0.49165 / Public 0.49482
-Using standard weighting strategy           : LB score is : Private 0.49270 / Public 0.49603
-Using weighting strategy 1                  : LB score is : Private 0.49550 / Public 0.49906
-Using weighting strategy 2                  : LB score is : Private 0.49184 / Public 0.49522
-Using different strategies for each key     : LB score is : Private 0.49 / Public 0.49
+Validation produces the following results
+
+               HITS@1  %USE  %ACC    HITS@2  %USE  %ACC    HITS@3  %USE  %ACC    HITS@4  %USE  %ACC    HITS@5  %USE  %ACC
+LEAK          0.25021 29.24 85.58 | 0.01822  5.86 31.11 | 0.00115  0.67 17.06 | 0.00005  0.05 10.29 | 0.00000  0.00  3.51 |
+UID_DEST      0.02443  9.62 25.38 | 0.00800 10.32  7.75 | 0.00365  7.86  4.64 | 0.00205  5.59  3.67 | 0.00126  4.02  3.14 |
+DEST_MKT_PACK 0.11119 60.56 18.36 | 0.07837 82.44  9.51 | 0.06073 89.14  6.81 | 0.05004 91.04  5.50 | 0.04080 91.60  4.45 |
+DEST          0.00019  0.07 27.93 | 0.00017  0.19  9.07 | 0.00014  0.30  4.85 | 0.00014  0.38  3.74 | 0.00014  0.51  2.75 |
+HOT_CO_MKT    0.00053  0.51 10.25 | 0.00051  1.19  4.26 | 0.00055  2.03  2.73 | 0.00062  2.92  2.14 | 0.00061  3.83  1.59 |
+HOT_CO        0.00000  0.00  0.00 | 0.00000  0.00  0.00 | 0.00000  0.00  1.69 | 0.00000  0.01  1.10 | 0.00000  0.03  0.00 |
+Total MAP =  0.48304672758905076
+
+5 minutes to build the recommendation system
+4 minutes to apply it on the validation set
 """
 
 import pandas as pd
@@ -21,7 +29,7 @@ class BayesianExpediaReco(object):
                  weight_type=None,
                  name='standard'):
         self.nb_recos = nb_recos
-        self.best_hotels = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
+        self.best_hotels = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
         self.validation_stats = defaultdict(lambda: {x: [0, 0] for x in range(self.nb_recos)})
         self.the_keys = None
         self.do_submission = do_submission
@@ -181,6 +189,10 @@ class BayesianExpediaReco(object):
                 #      break
         print(nb_lines, nb_bookings)
 
+    @staticmethod
+    def get_df_as_np(df, rows):
+        return df[rows].dropna().values
+
     def build_reco(self):
         """
         Build best hotels given keys
@@ -213,7 +225,7 @@ class BayesianExpediaReco(object):
             input_file = 'input/trn_data.csv'
 
         # Read the files by chunks
-        for k, df in enumerate(pd.read_csv(input_file, chunksize=100000, iterator=True)):
+        for k, df in enumerate(pd.read_csv(input_file, chunksize=250000, iterator=True)):
             # Compute weights
             self.update_weights(df=df, ref_type='checkin')
 
@@ -244,19 +256,30 @@ class BayesianExpediaReco(object):
                 # As a last resort use numpy apply_along_axis with a prior conversion of pd.DataFrame to ndarray using
                 # .values attribute thatgives a view of the DataFrame
                 the_rows = keys_ + ['weight', 'hotel_cluster']
-                # print(the_rows)
-                np.apply_along_axis(func1d=self.update_reco_raw,
-                                    axis=1,
-                                    arr=df[the_rows].dropna().values,
-                                    len_keys=len(keys_),
-                                    key_nb=k_)
+                # Improve process speed using groupby function
+                gp_df = df[the_rows].dropna().groupby(keys_ + ['hotel_cluster']).sum().reset_index()
+                # Make sure rows are in the correct order
+                gp_df = gp_df[the_rows].values
+                # gp_df = df[the_rows].dropna().values
+                for i in range(len(gp_df)):
+                    self.update_reco_raw(gp_df[i, :], len_keys=len(keys_), key_nb=k_)
+
+                # print(gp_df.sort_values(by='hotel_cluster'))
+                # print(len(df), len(gp_df))
+                # np.apply_along_axis(func1d=self.update_reco_raw,
+                #                     axis=1,
+                #                     arr=df[the_rows].dropna().values,
+                #                     # arr=self.get_df_as_np(gp_df, the_rows),
+                #                     # arr=gp_df.values,
+                #                     len_keys=len(keys_),
+                #                     key_nb=k_)
 
             nb_lines += len(df)
             nb_bookings += df['is_booking'].sum()
             if nb_lines % 1000000 == 0:
                 print("nb_lines %10d in %5.1f " % (nb_lines, (time.time() - start) / 60))
 
-            # if k > 2:
+            # if k > 1:
             #     print("Interrupted build for quick testing")
             #     break
 
@@ -273,7 +296,9 @@ class BayesianExpediaReco(object):
         len_recos = 0
         recos = []
         # Loop over registered keys
-        for k_ in range(len(self.the_keys)):
+        k_ = 0
+        while (k_ < len(self.the_keys)) and (len_recos < self.nb_recos):
+        # for k_ in range(len(self.the_keys)):
             # Compute the key using the indices
             dict_key = tuple(row[indices[k_]])
             # Check if dict_key is in the k_ th defaultdict
@@ -300,13 +325,22 @@ class BayesianExpediaReco(object):
                         if top_items[i][0] == row[-1]:
                             self.validation_stats[k_][len_recos][1] += 1
                     len_recos += 1
+            # go to the next key
+            k_ += 1
 
         # Return the list of recommendations in the required format (i.e. space separated)
         str_recos = [str(int(reco)) for reco in recos]
         return ' '.join(str_recos)
 
     def assign_reco_to_validation(self):
-        # TODO accelerate process
+        # Display a few stuff
+        # for kk in self.best_hotels.keys():
+        #     print(len(self.best_hotels[kk].keys()))
+        #     for j, kkk in enumerate(self.best_hotels[kk].keys()):
+        #         print("    ->", self.best_hotels[kk][kkk])
+        #         if j > 10:
+        #             break
+
         start = time.time()
         nb_lines = 0
         # Init validation stats :
@@ -329,10 +363,18 @@ class BayesianExpediaReco(object):
 
         for df in pd.read_csv('input/val_data.csv', chunksize=100000, iterator=True):
             the_rows = all_keys + ['hotel_cluster']
-            df['recos'] = np.apply_along_axis(func1d=self.apply_reco_to_dataset,
-                                              axis=1,
-                                              arr=df[the_rows].values,
-                                              indices=indices)
+
+            np_df = df[the_rows].values
+            df['recos'] = ""
+            np_recos = df.recos.values
+            for i in range(len(np_df)):
+                np_recos[i] = self.apply_reco_to_dataset(np_df[i, :], indices)
+            df['recos'] = np_recos
+
+            # df['recos'] = np.apply_along_axis(func1d=self.apply_reco_to_dataset,
+            #                                   axis=1,
+            #                                   arr=df[the_rows].values,
+            #                                   indices=indices)
 
             df['id'] = df.index.values
 
@@ -394,55 +436,45 @@ class BayesianExpediaReco(object):
             self.assign_reco_to_validation()
 
     def display_stats(self):
-        if self.do_submission:
-            print("No statistics available on submission data")
-            return None
-
-        print("Results for keys %s" % self.the_keys)
-
-        score = 0
-        for i in range(self.nb_recos):
-            score += self.validation_stats[i][1] / ((i + 1) * self.validation_recos)
-            print("%% Hits @ place %d : %.5f"
-                  % (i, self.validation_stats[i][1] / self.validation_recos))
-        print(score)
-
-        header = ""
-        str_res = ""
-        for i in range(self.nb_recos):
-            header += "  MAP@{0:d}  %ACC   ".format(i + 1)
-            str_res += "{1:.5f} {2:5.2f} | ".format(
-                i,
-                self.validation_stats[i][1] / self.validation_recos,
-                100 * self.validation_stats[i][1] / self.validation_stats[i][0]
-            )
-        print(header)
-        print(str_res)
-
-    def display_stats2(self):
-        if self.do_submission:
-            print("No statistics available on submission data")
-            return None
+        # if self.do_submission:
+        #     print("No statistics available on submission data")
+        #     return None
 
         # make and display header
         header = ""
         for i in range(self.nb_recos):
-            header += " HITS@{0:d}  %USE  %ACC   ".format(i + 1)
+            header += " HITS@{0:d}   %USE   %ACC   ".format(i + 1)
         print("{0:<20s} {1:s}".format("", header))
 
         # Print individual stats
         map = 0
+        total_hits = np.zeros(self.nb_recos)
+        total_use = np.zeros(self.nb_recos)
         for k_, (name_, keys_, w_type_) in enumerate(self.the_keys):
             str_res = ""
 
             for i in range(self.nb_recos):
-                str_res += "{1:.5f} {2:5.2f} {3:5.2f} | ".format(
+                str_res += "{1:.5f} {2:6.2f} {3:6.2f} | ".format(
                     i,
                     self.validation_stats[k_][i][1] / self.validation_recos,
                     100 * self.validation_stats[k_][i][0] / self.validation_recos,
                     100 * self.validation_stats[k_][i][1] / (1e-5 + self.validation_stats[k_][i][0]),
                 )
                 map += (self.validation_stats[k_][i][1] / self.validation_recos) / (i + 1)
+                total_hits[i] += self.validation_stats[k_][i][1]
+                total_use[i] += self.validation_stats[k_][i][0]
 
             print("{0:<20s} {1:s}".format(name_.upper(), str_res))
+
+        # Print full recap
+        str_res = ""
+        for i in range(self.nb_recos):
+            str_res += "{1:.5f} {2:6.2f} {3:6.2f} | ".format(
+                i,
+                total_hits[i] / self.validation_recos,
+                100 * total_use[i] / self.validation_recos,
+                100 * total_hits[i] / (1e-5 + total_use[i]),
+            )
+        print("{0:<20s} {1:s}".format("TOTAL", str_res))
+
         print("Total MAP = ", map)
