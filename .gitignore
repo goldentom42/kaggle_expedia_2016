@@ -1,0 +1,7 @@
+
+/submission/*.csv
+/submission/*.7z
+/input/test.csv
+/input/train.csv
+/input/trn_data.csv
+/input/val_data.csv
